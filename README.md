@@ -1,36 +1,79 @@
-# Introduction
+# hyperf-interface-signature
+hyperf框架 在中间件中 使用签名混淆验证。读取请求header头sign，time-stamp，nonce-str和所有参数进行ascii排序拼接字符串，base64,md5 混淆后与签名验签。
 
-This is a skeleton application using the Hyperf framework. This application is meant to be used as a starting place for those looking to get their feet wet with Hyperf Framework.
+根据当前时间戳和所有的请求参数来进行计算签名，所以每一次请求的header头内容都会不同
 
-# Requirements
+主要解决通过中间人接口拦截分析进行重放攻击的威胁，不会扣JS代码的不法分子就可以拒之门外啦，还可以加上一下AES对称加解密或者RSA非对称加解密进行自定义混淆操作，进一步提高安全性.
 
-Hyperf has some requirements for the system environment, it can only run under Linux and Mac environment, but due to the development of Docker virtualization technology, Docker for Windows can also be used as the running environment under Windows.
 
-The various versions of Dockerfile have been prepared for you in the [hyperf/hyperf-docker](https://github.com/hyperf/hyperf-docker) project, or directly based on the already built [hyperf/hyperf](https://hub.docker.com/r/hyperf/hyperf) Image to run.
 
-When you don't want to use Docker as the basis for your running environment, you need to make sure that your operating environment meets the following requirements:  
+主要代码在app/Middlerware/AuthMiddleware.php中
 
- - PHP >= 7.3
- - Swoole PHP extension >= 4.5，and Disabled `Short Name`
- - OpenSSL PHP extension
- - JSON PHP extension
- - PDO PHP extension （If you need to use MySQL Client）
- - Redis PHP extension （If you need to use Redis Client）
- - Protobuf PHP extension （If you need to use gRPC Server of Client）
+# Postman Pre-request Script代码 
 
-# Installation using Composer
+根据下面的代码可以做前端的接口签名混淆操作，跟Javascript语法非常相似
 
-The easiest way to create a new Hyperf project is to use Composer. If you don't have it already installed, then please install as per the documentation.
+```javascript
+request_time_stamp =  Math.round(new Date() / 1000);  // 获取秒级时间戳
+token = pm.environment.get("sign-token")  //  读取环境变量，这里的环境变量应该在登录接口的Tests里面设置
+pm.environment.set('sign-time-stamp',request_time_stamp)   //  读取设置环境变量，共所有接口使用
+nonce_str = randomString(32)  
+pm.environment.set('sign-nonce-str',nonce_str)  // 设置随机字符串环境变量 
+var params_args = pm.request.url.query.members;  // 获取当前请求所有Get参数及其值
+var body_args = request.data; // 获取当前请求所有Post参数及其值
+for(var i=0;i<params_args.length;i++){
+    body_args[params_args[i].key] = params_args[i].value;  // 合并Get参数Post参数的键和值
+}
+body_args['time_stamp'] = request_time_stamp;
+body_args['nonce_str'] = nonce_str
+body_args['token'] = token
+body_args = objectsort(body_args)  //所有参数合并排序
+console.log(body_args);
+body_args_base64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(body_args)).toUpperCase()  //  base64混淆字母转大写
+// console.log(body_args_base64);
+sign = CryptoJS.MD5(body_args_base64).toString()  // MD5混淆
+// console.log(sign);
+sign_type = (request_time_stamp % 5) % 2;  //当前时间进行取余操作，判断奇偶数
 
-To create your new Hyperf project:
+// console.log(sign_type);
 
-$ composer create-project hyperf/hyperf-skeleton path/to/install
+if(sign_type==1){  //根据时间戳求余奇偶数来进行混淆拼接，得出最后的sign
+    new_sign =  sign + token
+}else{
+    new_sign =  token + sign
+}
+console.log(new_sign);
+pm.environment.set('sign-sign',new_sign)   //设置sign参数，供全局接口使用
+function objectsort(obj){
+    let arr = new Array();
+    let num = 0;
+    for (let i in obj) {
+        arr[num] = i;
+        num++;
+    }
+    const sortArr = arr.sort();
+    //自定义排序字符串
+    let str = "";
+    for (let i in sortArr) {
+        str += sortArr[i] + "=" + obj[sortArr[i]] + "&";
+    }
+    //去除两侧&符号
+    const char = "&";
+    str = str.replace(new RegExp("^\\" + char + "+|\\" + char + "+$", "g"), "");
+    return str;
+}
 
-Once installed, you can run the server immediately using the command below.
+/* 生成随即字符串 */
+function randomString(len) {
+  len = len || 32;
+  const $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz-';
+  const maxPos = $chars.length;
+  let res = '';
+  for (let i = 0; i < len; i++) {
+    res += $chars.charAt(Math.floor(Math.random() * maxPos));
+  }
+  return res;
+}
 
-$ cd path/to/install
-$ php bin/hyperf.php start
 
-This will start the cli-server on port `9501`, and bind it to all network interfaces. You can then visit the site at `http://localhost:9501/`
-
-which will bring up Hyperf default home page.
+```
